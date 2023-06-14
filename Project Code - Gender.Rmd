@@ -1,0 +1,433 @@
+---
+title: "Project Code - Gender"
+output: github_document
+---
+
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(lubridate)
+library(arrow)
+```
+
+```{r import saved data, echo=FALSE}
+data_path <- "/Users/lisawu/Downloads/"
+applications <- read_parquet(paste0(data_path,"project_dataframe.parquet"))
+```
+
+```{r rough dataset}
+RoughData <-applications %>%
+  filter(disposal_type %in% c("ISS", "ABN")) %>%
+  select(filing_date, appl_status_date,tenure_days, appl_status_code,disposal_type,gender, race, wg, examiner_art_unit, examiner_id, tc) %>%
+  mutate(status_date = as.Date(appl_status_date, format = "%d%b%Y %H:%M:%S")) %>%
+  mutate(processing_days = as.numeric(status_date - filing_date))
+```
+
+```{r clean the RoughData and name it }
+dataset <- RoughData %>%
+  # changed variable name 
+  rename(id=examiner_id, art_unit = examiner_art_unit) %>%
+  # created a new table with selected variables
+  select(id, gender, race, disposal_type, status_date, filing_date, processing_days, tc, wg, art_unit, tenure_days ) %>%
+  # drop all NAs for gender
+  drop_na(gender) %>%
+  # drop all NAs for status date
+  drop_na(processing_days) %>%
+  #filter wg 1600, 1700, 2100, 2400
+  filter(!(wg == "1600"), !(wg == "1700"), !(wg == "2100"), !(wg == "2400"))
+```
+
+
+```{r processing time of female and male in organizaion level by histogram}
+average_gender_matrix_organization <- dataset %>%
+  group_by(id, disposal_type, gender) %>%
+  summarize(average_processing_days_gender = mean(processing_days, na.rm = TRUE)) %>%
+  group_by(gender, disposal_type)  %>%
+  summarize(average_processing_days_gender = mean(average_processing_days_gender))  %>%
+  pivot_wider(names_from = disposal_type, values_from = average_processing_days_gender)
+
+# Convert the matrix to a long format
+average_gender_matrix_organization_long <- average_gender_matrix_organization %>%
+  gather(disposal_type, average_processing_days_gender, -gender)
+
+# Create the bar chart
+bar_chart <- ggplot(average_gender_matrix_organization_long, aes(x = gender, y = average_processing_days_gender, fill = disposal_type)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  labs(title = "Processing Time by Gender Across Organization",
+       x = "Gender",
+       y = "Average Processing Days",
+       fill = "Disposal Type") +
+  facet_wrap(~disposal_type) +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 3, 
+               aes(label = round(average_processing_days_gender, digits = 0)), 
+               position = position_dodge(width = 0.9))
+
+bar_chart
+```
+
+```{r create a table just for tc}
+tc_dataframe <- dataset %>%
+  select (id, gender, race, disposal_type, processing_days, tc,tenure_days)
+```
+
+```{r create a table just for tc regression}
+averages_gender_reg <- tc_dataframe %>%
+  group_by(id, tc, gender,disposal_type) %>%
+  summarize(average_processing_days_gender_tc = mean(processing_days),experience = max(tenure_days))
+
+model_1 <- lm(average_processing_days_gender_tc~as.factor(gender)+as.factor(tc)+experience,data = averages_gender_reg)
+summary(model_1)
+```
+
+```{r processing time of gender in tc level by histogram}
+# Calculate average processing days per category
+averages_gender_tc <- tc_dataframe %>%
+  group_by(id, tc, gender,disposal_type) %>%
+  summarize(average_processing_days_gender_tc = mean(processing_days)) %>%
+  group_by(tc, gender, disposal_type)  %>%
+  summarize(average_processing_days_gender_tc = mean(average_processing_days_gender_tc))
+
+
+# Create the bar chart
+ggplot(averages_gender_tc, aes(x = as.factor(tc), y = average_processing_days_gender_tc, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  facet_wrap(~disposal_type) +
+  labs(title = "Processing Time by Gender Across TCs",x = "TC", y = "Average Processing Days", fill = "Gender") +
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.6, 
+               aes(label = round(average_processing_days_gender_tc, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+
+```{r create a table just for wg}
+wg_dataframe <- dataset %>%
+  select (id, gender, race, disposal_type, processing_days, tc,tenure_days,wg)
+```
+
+
+```{r processing time of gender in wg level by histogram ABN}
+filtered_table_wg_0 <- wg_dataframe%>%
+  filter (disposal_type == "ABN")
+
+# Calculate average processing days per category
+averages_gender_wg_ABN <- filtered_table_wg_0%>%
+  group_by(id, wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg = mean(processing_days)) %>%
+  group_by(wg, gender, disposal_type)  %>%
+  summarize(average_processing_days_gender_wg = mean(average_processing_days_gender_wg))
+
+# Create the bar chart
+ggplot(averages_gender_wg_ABN, aes(x = as.factor(wg), y = average_processing_days_gender_wg, fill = gender)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ABN, Processing Time by Gender Across Workgroups", x = "Workgroup", y = "Average Processing Days", fill = "Gender") 
+```
+
+
+```{r processing time of gender in wg 1600 level by histogram ABN}
+filtered_table_wg_1 <- wg_dataframe%>%
+  filter(wg >= 1600 & wg <= 1690) %>%
+  filter (disposal_type == "ABN")
+
+# Calculate average processing days per category
+averages_gender_wg_ABN_1 <- filtered_table_wg_1 %>%
+  group_by(id, wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_1 = mean(processing_days)) %>%
+  group_by(wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_1 = mean(average_processing_days_gender_wg_1))
+
+# Create the bar chart
+ggplot(averages_gender_wg_ABN_1, aes(x = as.factor(wg), y = average_processing_days_gender_wg_1, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ABN, Processing Time by Gender Across Workgroup 1600", x = "Workgroup", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.6, 
+               aes(label = round(average_processing_days_gender_wg_1, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+```{r processing time of gender in wg 1700 level by histogram ABN}
+
+filtered_table_wg_2 <- wg_dataframe%>%
+  filter(wg >= 1700 & wg <= 1790) %>%
+  filter (disposal_type == "ABN")
+
+# Calculate average processing days per category
+averages_gender_wg_ABN_2 <- filtered_table_wg_2 %>%
+  group_by(wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_2 = mean(processing_days))
+
+# Create the bar chart
+ggplot(averages_gender_wg_ABN_2, aes(x = as.factor(wg), y = average_processing_days_gender_wg_2, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ABN, Processing Time by Gender Across Workgroup 1700", x = "Workgroup", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.6, 
+               aes(label = round(average_processing_days_gender_wg_2, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+```{r processing time of gender in wg 2100 level by histogram ABN}
+
+filtered_table_wg_3 <- wg_dataframe%>%
+  filter(wg >= 2100 & wg <= 2190) %>%
+  filter (disposal_type == "ABN")
+
+# Calculate average processing days per category
+averages_gender_wg_ABN_3 <- filtered_table_wg_3 %>%
+  group_by(id, wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_3 = mean(processing_days)) %>%
+  group_by(wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_3 = mean(average_processing_days_gender_wg_3))
+
+# Create the bar chart
+ggplot(averages_gender_wg_ABN_3, aes(x = as.factor(wg), y = average_processing_days_gender_wg_3, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ABN, Processing Time by Gender Across Workgroup 2100", x = "Workgroup", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.6, 
+               aes(label = round(average_processing_days_gender_wg_3, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+
+```{r processing time of gender in wg 2400 level by histogram ABN}
+
+filtered_table_wg_4 <- wg_dataframe%>%
+  filter(wg >= 2400 & wg <= 2490) %>%
+  filter (disposal_type == "ABN")
+
+# Calculate average processing days per category
+averages_gender_wg_ABN_4 <- filtered_table_wg_4 %>%
+  group_by(id, wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_4 = mean(processing_days)) %>%
+  group_by(wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_4 = mean(average_processing_days_gender_wg_4))
+
+# Create the bar chart
+ggplot(averages_gender_wg_ABN_4, aes(x = as.factor(wg), y = average_processing_days_gender_wg_4, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ABN, Processing Time by Gender Across Workgroup 2400", x = "Workgroup", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.6, 
+               aes(label = round(average_processing_days_gender_wg_4, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+
+
+```{r processing time of gender in wg level by histogram ISS}
+filtered_table_wg_9 <- wg_dataframe%>%
+  filter (disposal_type == "ISS")
+
+# Calculate average processing days per category
+averages_gender_wg_2 <- filtered_table_wg_9 %>%
+  group_by(id, wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_2 = mean(processing_days)) %>%
+  group_by(wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_2 = mean(average_processing_days_gender_wg_2))
+
+# Create the bar chart
+ggplot(averages_gender_wg_2, aes(x = as.factor(wg), y = average_processing_days_gender_wg_2, fill = gender)) +
+  geom_bar(stat = "identity", position = "stack") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ISS, Processing Time by Gender Across Workgroups", x = "Workgroup", y = "Average Processing Days", fill = "Gender") 
+```
+```{r pie chart for percentage when female processing time is higher than male }
+percentage_female_higher <- averages_gender_wg_2 %>%
+  group_by() %>%
+  summarize(percentage = mean(average_processing_days_gender_wg_2[gender == "female"] > average_processing_days_gender_wg_2[gender == "male"]) * 100)
+
+# Calculate the percentage of male higher
+percentage_male_higher <- 100 - percentage_female_higher
+
+df <- data.frame(
+  Female_Higher = percentage_female_higher,
+  Male_Higher = percentage_male_higher
+)
+
+print(df)
+```
+
+
+```{r processing time of gender in wg 1600 level by histogram ISS}
+filtered_table_wg_5 <- wg_dataframe%>%
+  filter(wg >= 1600 & wg <= 1690) %>%
+  filter (disposal_type == "ISS")
+
+# Calculate average processing days per category
+averages_gender_wg_ISS_5 <- filtered_table_wg_5 %>%
+  group_by(id, wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_5 = mean(processing_days)) %>%
+  group_by(wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_5 = mean(average_processing_days_gender_wg_5))
+
+# Create the bar chart
+ggplot(averages_gender_wg_ISS_5, aes(x = as.factor(wg), y = average_processing_days_gender_wg_5, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ISS, Processing Time by Gender Across Workgroup 1600", x = "Workgroup", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.6, 
+               aes(label = round(average_processing_days_gender_wg_5, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+```{r processing time of gender in wg 1700 level by histogram ISS}
+filtered_table_wg_6 <- wg_dataframe%>%
+  filter(wg >= 1700 & wg <= 1790) %>%
+  filter (disposal_type == "ISS")
+
+# Calculate average processing days per category
+averages_gender_wg_ISS_6 <- filtered_table_wg_6 %>%
+  group_by(id, wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_6 = mean(processing_days)) %>%
+  group_by(wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_6 = mean(average_processing_days_gender_wg_6)) 
+
+# Create the bar chart
+ggplot(averages_gender_wg_ISS_6, aes(x = as.factor(wg), y = average_processing_days_gender_wg_6, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ISS, Processing Time by Gender Across Workgroup 1700", x = "Workgroup", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.6, 
+               aes(label = round(average_processing_days_gender_wg_6, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+
+```{r processing time of gender in wg 2100 level by histogram ISS}
+filtered_table_wg_7 <- wg_dataframe%>%
+  filter(wg >= 2100 & wg <= 2190) %>%
+  filter (disposal_type == "ISS")
+
+# Calculate average processing days per category
+averages_gender_wg_ISS_7 <- filtered_table_wg_7 %>%
+  group_by(id, wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_7 = mean(processing_days)) %>%
+  group_by(wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_7 = mean(average_processing_days_gender_wg_7))
+
+# Create the bar chart
+ggplot(averages_gender_wg_ISS_7, aes(x = as.factor(wg), y = average_processing_days_gender_wg_7, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ISS, Processing Time by Gender Across Workgroup 2100", x = "Workgroup", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.6, 
+               aes(label = round(average_processing_days_gender_wg_7, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+
+
+```{r processing time of gender in wg 2400 level by histogram ISS}
+filtered_table_wg_8 <- wg_dataframe%>%
+  filter(wg >= 2400 & wg <= 2490) %>%
+  filter (disposal_type == "ISS")
+
+# Calculate average processing days per category
+averages_gender_wg_ISS_8 <- filtered_table_wg_8 %>%
+  group_by(id, wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_8 = mean(processing_days)) %>%
+  group_by(wg, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_wg_8 = mean(average_processing_days_gender_wg_8))
+
+# Create the bar chart
+ggplot(averages_gender_wg_ISS_8, aes(x = as.factor(wg), y = average_processing_days_gender_wg_8, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ISS, Processing Time by Gender Across Workgroup 2400", x = "Workgroup", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.6, 
+               aes(label = round(average_processing_days_gender_wg_8, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+
+```{r create a table just for art unit}
+au_dataframe <- dataset %>%
+  select (id, gender, race, disposal_type, processing_days, tc,tenure_days,art_unit)
+```
+
+```{r processing time of gender in wg 2400 level by histogram ISS v1}
+filtered_table_au <- au_dataframe%>%
+  filter(art_unit >= 2400 & art_unit <= 2440) %>%
+  filter (disposal_type == "ISS")
+
+# Calculate average processing days per category
+averages_gender_au_ISS_1 <- filtered_table_au %>%
+  group_by(id, art_unit, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_au_1 = mean(processing_days)) %>%
+  group_by(art_unit, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_au_1 = mean(average_processing_days_gender_au_1))
+
+# Create the bar chart
+ggplot(averages_gender_au_ISS_1, aes(x = as.factor(art_unit), y = average_processing_days_gender_au_1, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ISS, Processing Time by Gender Across Artunits for WG 2400", x = "Art Units", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.2, 
+               aes(label = round(average_processing_days_gender_au_1, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+
+```{r processing time of gender in wg 2400 level by histogram ISS v2}
+filtered_table_au_2 <- au_dataframe%>%
+  filter(art_unit >= 2441 & art_unit <= 2470) %>%
+  filter (disposal_type == "ISS")
+
+# Calculate average processing days per category
+averages_gender_au_ISS_2 <- filtered_table_au_2 %>%
+  group_by(id, art_unit, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_au_2 = mean(processing_days)) %>%
+  group_by(art_unit, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_au_2 = mean(average_processing_days_gender_au_2)) 
+
+# Create the bar chart
+ggplot(averages_gender_au_ISS_2, aes(x = as.factor(art_unit), y = average_processing_days_gender_au_2, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ISS, Processing Time by Gender Across Artunits for WG 2400", x = "Art Units", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.2, 
+               aes(label = round(average_processing_days_gender_au_2, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
+
+```{r processing time of gender in wg 2400 level by histogram ISS v3}
+filtered_table_au_3 <- au_dataframe%>%
+  filter(art_unit >= 2471 & art_unit <= 2499) %>%
+  filter (disposal_type == "ISS")
+
+# Calculate average processing days per category
+averages_gender_au_ISS_3 <- filtered_table_au_3 %>%
+  group_by(id, art_unit, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_au_3 = mean(processing_days)) %>%
+  group_by(art_unit, gender, disposal_type) %>%
+  summarize(average_processing_days_gender_au_3 = mean(average_processing_days_gender_au_3))
+
+# Create the bar chart
+ggplot(averages_gender_au_ISS_3, aes(x = as.factor(art_unit), y = average_processing_days_gender_au_3, fill = gender)) +
+  geom_bar(stat = "identity", position = "dodge") +
+  theme_minimal()+
+  theme(axis.text.x = element_text(angle = 90, hjust = 1), ) + 
+  scale_fill_manual(values = c("female" = "lightpink", "male" = "lightblue")) + 
+  labs(title = "Disposal Typel: ISS, Processing Time by Gender Across Artunits for WG 2400", x = "Art Units", y = "Average Processing Days", fill = "Gender") +
+  stat_summary(fun = "mean", geom = "text", vjust = -0.5, size = 2.2, 
+               aes(label = round(average_processing_days_gender_au_3, digits = 0)), 
+               position = position_dodge(width = 0.9))
+```
